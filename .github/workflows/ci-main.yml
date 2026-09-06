@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  # 손으로 돌릴 수 있게 열어 둔다. 배포만 다시 태우고 싶을 때 쓴다.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # 빌드가 없다 — index.html 하나라 검사할 게 없다. main 에 들어오면 Jenkins 에 dev 배포를 건다.
+  trigger-deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Jenkins Deploy
+        env:
+          JENKINS_URL: ${{ secrets.JENKINS_URL }}
+          # 토큰은 Jenkins 잡 설정에만 있는 값이다. 레포에 적어 두면 그걸 아는 사람 누구나
+          # 인증 없이 배포를 걸 수 있다 — Jenkins 는 인터넷에서 열려 있다.
+          DEPLOY_TOKEN: ${{ secrets.JENKINS_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          # 시크릿에 줄바꿈이나 공백이 딸려 오면 curl 이 URL 을 못 읽는다(exit 3).
+          BASE="$(printf '%s' "${JENKINS_URL}" | tr -d '[:space:]')"
+          BASE="${BASE%/}"
+          case "${BASE}" in
+            http://*|https://*) ;;
+            "") echo "::error::JENKINS_URL 이 비어 있습니다."; exit 1 ;;
+            *) echo "::error::JENKINS_URL 은 http:// 또는 https:// 로 시작해야 합니다."; exit 1 ;;
+          esac
+          TOKEN="$(printf '%s' "${DEPLOY_TOKEN}" | tr -d '[:space:]')"
+          if [ -z "${TOKEN}" ]; then
+            echo "::error::JENKINS_DEPLOY_TOKEN 시크릿이 비어 있습니다."
+            exit 1
+          fi
+          # -f 가 없으면 404·500 에도 curl 이 0 을 돌려준다. HTTP 오류를 실패로 받는다.
+          curl -fsS -X POST "${BASE}/generic-webhook-trigger/invoke?token=${TOKEN}"
